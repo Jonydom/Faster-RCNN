@@ -13,6 +13,7 @@ Faster R-CNN是个两阶段的目标检测方法，主要由提取候选区域�
 ![image text](https://github.com/514forever/IMG/blob/main/%E5%9B%BE%E7%89%871.png)
 
 Faster R-CNN检测部分主要可以分为以下四个模块：
+
 （1）Conv layers特征提取网络，采用VGG16、ResNet等常用结构作为特征提取的模块，用于提取输入图像特征。然后将提取得到的图像特征feature maps用于后续的RPN层生成一系列可能的候选框。
 
 （2）RPN候选检测框生成网络，该网络替代了之前Fast R-CNN版本的Selective Search，用于生成候选框proposal ，输出为一系列候选框以及每个候选框框中目标的概率值。
