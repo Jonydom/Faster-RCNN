@@ -10,6 +10,8 @@ Faster-RCNN模型是在Fast-RCNN模型的基础上建立的，由于目标检测
 
 Faster R-CNN是个两阶段的目标检测方法，主要由提取候选区域的全卷积网络RPN与Fast R-CNN检测器组成，整个检测过程通过一个网络完成。RPN和Fast R-CNN的配合作用可以理解为一种注意力机制，先大致确定目标在视野中的位置，然后再锁定目标仔细观察，确定目标的类别和更加准确的位置。 图1为论文中给出的Faster-RCNN基本结构图。
 
+![image text](https://github.com/514forever/IMG/blob/main/%E5%9B%BE%E7%89%871.png)
+
 Faster R-CNN检测部分主要可以分为以下四个模块：
 （1）Conv layers特征提取网络，采用VGG16、ResNet等常用结构作为特征提取的模块，用于提取输入图像特征。然后将提取得到的图像特征feature maps用于后续的RPN层生成一系列可能的候选框。
 
