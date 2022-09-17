@@ -132,7 +132,7 @@ config = ed({
     "save_checkpoint_path": "./",
 
     "mindrecord_dir": "../MindRecord_COCO_TRAIN",
-    "coco_root": "./coco2017/",
+    "coco_root": "../coco2017/",
     "train_data_type": "train2017",
     "val_data_type": "val2017",
     "instance_set": "annotations/instances_{}.json",

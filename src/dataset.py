@@ -6,12 +6,15 @@ import numpy as np
 from numpy import random
 
 # import mmcv
+import mindspore as ms
 import mindspore.dataset as de
-import mindspore.dataset.vision.c_transforms as C
 from mindspore.mindrecord import FileWriter
 from config import config
 import cv2
 
+
+def preprocess_fn():
+    pass
 
 def create_coco_label(is_training):
     """Get image path and annotation from COCO."""
@@ -70,6 +73,52 @@ def create_coco_label(is_training):
 
 
 def data_to_mindrecord_byte_image(dataset="coco", is_training=True, prefix="fasterrcnn.mindrecord", file_num=8):
-    pass
+    "Create MindRecord file"
+    mindrecord_dir = config.mindrecord_dir  # mindrecord_dir: "../MindRecord_COCO_TRAIN"
+    mindrecord_path = os.path.join(mindrecord_dir, prefix)
+    writer = FileWriter(mindrecord_path, file_num)  # mindspore下的函数：将用户自定义的数据转为MindRecord格式数据集的类（文件路径,生成MindRecord的文件个数）
+    if dataset == "coco":
+        image_files, image_anno_dict = create_coco_label(is_training)
+    # else:
+    #     image_files, image_anno_dict = filter_valid_data(config.IMAGE_DIR, config.ANNO_PATH)
 
-create_coco_label(True)
+    fasterrcnn_json = {
+        "image": {"type": "bytes"},
+        "annotation": {"type": "int32", "shape": [-1, 6]},
+    }
+    writer.add_schema(fasterrcnn_json, "fasterrcnn_json")
+
+    for image_name in image_files:
+        with open(image_name, 'rb') as f:
+            img = f.read()
+        annos = np.array(image_anno_dict[image_name], dtype=np.int32)
+        row = {"image": img, "annotation": annos}
+        writer.write_raw_data([row])
+    writer.commit()
+
+def create_fasterrcnn_dataset(mindrecord_file, batch_size=2, device_num=1, rank_id=0, is_training=True, num_parallel_workers=8):
+    """Create FasterRcnn dataset with MindDataset."""
+    cv2.setNumThreads(0)
+    de.config.set_prefetch_size(8)  # 设置预取数据size or 设置管道中线程的队列容量。
+    ds = de.MindDataset(mindrecord_file, columns_list=["image", "annotation"], num_shards=device_num, shard_id=rank_id,
+                        num_parallel_workers=4, shuffle=is_training)
+    decode = ms.dataset.vision.Decode()  # Decode()类，将输入的压缩图像解码为RGB格式
+
+    ds = ds.map(input_columns=["image"], operations=decode)  # Apply each operation in operations to this dataset.
+    compose_map_func = (lambda image, annotation: preprocess_fn(image, annotation, is_training))
+
+    if is_training:
+        ds = ds.map(input_columns=["image", "annotation"],
+                    output_columns=["image", "image_shape", "box", "label", "valid_num"],
+                    column_order=["image", "image_shape", "box", "label", "valid_num"],
+                    operations=compose_map_func, python_multiprocessing=False,
+                    num_parallel_workers=num_parallel_workers)
+        ds = ds.batch(batch_size, drop_remainder=True)
+    else:
+        ds = ds.map(input_columns=["image", "annotation"],
+                    output_columns=["image", "image_shape", "box", "label", "valid_num"],
+                    column_order=["image", "image_shape", "box", "label", "valid_num"],
+                    operations=compose_map_func,
+                    num_parallel_workers=num_parallel_workers)
+        ds = ds.batch(batch_size, drop_remainder=True)
+    return ds
