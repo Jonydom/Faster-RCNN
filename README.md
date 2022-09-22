@@ -29,8 +29,129 @@ Faster R-CNN检测部分主要可以分为以下四个模块：
 ## 2 案例实现
 
 ### 2.1 环境准备与数据读取
+本案例基于MindSpore-CPU版本实现，在CPU上完成模型训练。
+
+案例实现所使用的数据来自MS coco2017数据集，由于coco2017数据集数据量太大，故经过采样脚本对其进行裁剪，生成minicoco2017数据集，其包括3个文件夹，分别对应标签、训练集样本、验证集样本，文件路径结构如下：
+
+```
+.minicoco2017/
+├── annotations
+│   ├── train2017.json
+│   ├── val2017.json
+├── train2017
+│   ├── 000000001311.jpg
+│   ├── 000000030345.jpg
+│   └── ......
+└── val2017
+    ├── 000000078469.jpg
+    ├── 000000099598.jpg
+    └── ......
+```
+
+其中，annotations文件中有两个json文件，分为对应训练集和验证集的标签数据；train2017文件夹中包含30张训练图片，val2017文件夹中包含10张验证图片。minicoco2017数据集从coco2017数据集的80个分类中选择了3个分类：person、airplane、car。
+
+具体裁剪的实现方式：首先读取coco2017中目标检测标注文件instances_train2017.json，选择指定的三个分类；其次，根据这三个分类的id选择与其相关的所有图片，再对这些图片进行随机采样，选择30张作为训练集，选择10张作为验证集；最后，根据40张图片的id找出它们对应的标注信息。将上述图片和标注信息按照coco数据集文件的排列方式存储在本地。
+
+```python3
+import json
+from pycocotools.coco import COCO
+import wget
+import numpy as np
+from random import sample
+from pathlib import Path
+from joblib import delayed, Parallel
+
+ANNOTATIONS = {"info": {
+    "description": "minicoco2017"
+}
+}
+
+def myImages(images: list, train: int, val: int) -> tuple:
+    myImagesTrain = images[:train]
+    myImagesVal = images[train:train+val]
+    return myImagesTrain, myImagesVal
+
+
+def cocoJson(images: list) -> dict:
+    arrayIds = np.array([k["id"] for k in images])
+    annIds = coco.getAnnIds(imgIds=arrayIds, catIds=catIds, iscrowd=None)
+    anns = coco.loadAnns(annIds)
+    for k in anns:
+        k["category_id"] = catIds.index(k["category_id"])+1
+    catS = [{'id': int(value), 'name': key}
+            for key, value in categories.items()]
+    ANNOTATIONS["images"] = images
+    ANNOTATIONS["annotations"] = anns
+    ANNOTATIONS["categories"] = catS
+
+    return ANNOTATIONS
+
+
+def createJson(JsonFile: json, train: bool) -> None:
+    name = "train"
+    if not train:
+        name = "val"
+    Path("minicoco2017/annotations").mkdir(parents=True, exist_ok=True)
+    with open(f"minicoco2017/annotations/{name}2017.json", "w") as outfile:
+        json.dump(JsonFile, outfile)
+
+
+def downloadImagesToTrain(img: dict) -> None:
+    link = (img['coco_url'])
+    Path("minicoco2017/train2017").mkdir(parents=True, exist_ok=True)
+    wget.download(link, f"{'minicoco2017/train2017/' + img['file_name']}")
+
+def downloadImagesToVal(img: dict) -> None:
+    link = (img['coco_url'])
+    Path("minicoco2017/val2017").mkdir(parents=True, exist_ok=True)
+    wget.download(link, f"{'minicoco2017/val2017/' + img['file_name']}")
+
+# Instantiate COCO specifying the annotations json path; download here: https://cocodataset.org/#download
+coco = COCO('./coco2017/annotations/instances_train2017.json')
+
+# Specify a list of category names of interest
+catNms = ['car', 'airplane', 'person']
+
+catIds = coco.getCatIds(catNms)  # catIds: [1, 3, 5]
+
+dictCOCO = {k: coco.getCatIds(k)[0] for k in catNms}  # dictCOCO: {'car': 3, 'airplane': 5, 'person': 1}
+dictCOCOSorted = dict(sorted(dictCOCO.items(), key=lambda x: x[1]))  # dictCOCOSorted: {'person': 1, 'car': 3, 'airplane': 5}
+
+IdCategories = list(range(1, len(catNms)+1))  # IdCategories: [1, 2, 3]
+categories = dict(zip(list(dictCOCOSorted), IdCategories))  # categories: {'person': 1, 'car': 2, 'airplane': 3}
+
+# getCatIds return a sorted list of id.
+# For the creation of the json file in coco format, the list of ids must be successive 1, 2, 3..
+# So we reorganize the ids. In the cocoJson method we modify the values of the category_id parameter.
+
+# Get the corresponding image ids and images using loadImgs
+imgIds = coco.getImgIds(catIds=catIds)  # 根据物体类别得id号，得到训练集中对应img的id，这里一共173张
+imgOriginals = coco.loadImgs(imgIds)  # 返回list数组，数组中包含173个字典
+
+# The images are selected randomly
+imgShuffled = sample(imgOriginals, len(imgOriginals))  # 进行图片顺序打乱
+
+# Choose the number of images for the training and validation set. default 30-10
+myImagesTrain, myImagesVal = myImages(imgShuffled, 30, 10)  # imgShuffled前30个图片作为训练集，31-40作为验证集
+
+trainSet = cocoJson(myImagesTrain)
+createJson(trainSet, train=True)
+
+valSet = cocoJson(myImagesVal)
+createJson(valSet, train=False)
+
+Parallel(
+    n_jobs=-1, prefer="threads")([delayed(downloadImagesToTrain)(img) for img in myImagesTrain])
+
+Parallel(
+    n_jobs=-1, prefer="threads")([delayed(downloadImagesToVal)(img) for img in myImagesVal])
+
+print("\nfinish.")
+```
 ![](https://cdn.jsdelivr.net/gh/Jonydom/myPic/img/1311.jpg)
 ![](https://cdn.jsdelivr.net/gh/Jonydom/myPic/img/30345.jpg)
+图2-3 训练集样本及其对应标签
+
 ### 2.2 数据集创建
 
 ### 2.3 模型构建
