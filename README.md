@@ -153,6 +153,71 @@ print("\nfinish.")
 图2-3 训练集样本及其对应标签
 
 ### 2.2 数据集创建
+在进行上述coco数据集裁剪后，就完成了数据集准备工作。接下来数据集创建的工作分为两部分：
+
+1. 读取minicoco2017数据集中训练集的标签信息，将图片信息和标注信息转换为华为mindrecord数据格式，生成文件`./MindRecord_COCO_TRAIN/FasterRcnn.mindrecord`和`./MindRecord_COCO_TRAIN/FasterRcnn.mindrecord.db`;
+
+​	具体实现方法：使用`pycocotools`工具读取minicoco2017数据集中训练集的标注文件`/minicoco2017/annotations/train2017.json`，获取所有的类别信息，存为字典`classes_dict`，获取所有图片的id，根据每个图片的id值，查找该图片的地址和所有标注的id，然后检索这个图片中所有的标注框信息（x, y, w, h, iscrowd）。根据`x, y, w, h`计算标注框的左上角和右下角的位置坐标`(x1, y1), (x2, y2)`。最后根据图片的文件路径，将对应的图片二进制信息、标注信息（x1, y1, x2, y2, class_id, iscrowd）存入mindrecord文件中。
+
+2. 使用`mindspore.dataset.MindDataset`创建数据集，读取生成的mindrecord数据文件，对数据进行数据增强操作。
+
+​	具体实现方法：使用`mindspore.dataset.MindDataset`创建数据集，读取生成的mindrecord数据文件，先将`image`二进制图片进行`Decode()`解码，转换为RGB模式，然后对数据再进行expand、rescale、imnormalize、flip、transpose等操作。
+
+```python3
+def data_to_mindrecord_byte_image(config, dataset="coco", is_training=True, prefix="fasterrcnn.mindrecord", file_num=1):
+    """Create MindRecord file."""
+    mindrecord_dir = config.mindrecord_dir  # mindrecord_dir: "./MindRecord_COCO_TRAIN"
+    mindrecord_path = os.path.join(mindrecord_dir, prefix)  # mindrecord_file: "/MindRecord_COCO_TRAIN/FasterRcnn.mindrecord0"
+    writer = FileWriter(mindrecord_path, file_num)
+    if dataset == "coco":
+        image_files, image_anno_dict = create_coco_label(is_training, config=config)
+    else:
+        image_files, image_anno_dict = create_train_data_from_txt(config.image_dir, config.anno_path)
+
+    fasterrcnn_json = {
+        "image": {"type": "bytes"},
+        "annotation": {"type": "int32", "shape": [-1, 6]},
+    }
+    writer.add_schema(fasterrcnn_json, "fasterrcnn_json")
+
+    for image_name in image_files:
+        with open(image_name, 'rb') as f:
+            img = f.read()
+        annos = np.array(image_anno_dict[image_name], dtype=np.int32)
+        row = {"image": img, "annotation": annos}
+        writer.write_raw_data([row])
+    writer.commit()
+
+
+def create_fasterrcnn_dataset(config, mindrecord_file, batch_size=2, device_num=1, rank_id=0, is_training=True,
+                              num_parallel_workers=8, python_multiprocessing=False):
+    """Create FasterRcnn dataset with MindDataset."""
+    cv2.setNumThreads(0)
+    de.config.set_prefetch_size(1)
+    ds = de.MindDataset(mindrecord_file, columns_list=["image", "annotation"], num_shards=device_num, shard_id=rank_id,
+                        num_parallel_workers=4, shuffle=is_training)
+    decode = ms.dataset.vision.Decode()
+    ds = ds.map(input_columns=["image"], operations=decode)
+    compose_map_func = (lambda image, annotation: preprocess_fn(image, annotation, is_training, config=config))
+
+    if is_training:
+        ds = ds.map(input_columns=["image", "annotation"],
+                    output_columns=["image", "image_shape", "box", "label", "valid_num"],
+                    column_order=["image", "image_shape", "box", "label", "valid_num"],
+                    operations=compose_map_func, python_multiprocessing=python_multiprocessing,
+                    num_parallel_workers=num_parallel_workers)
+        ds = ds.batch(batch_size, drop_remainder=True)
+    else:
+        ds = ds.map(input_columns=["image", "annotation"],
+                    output_columns=["image", "image_shape", "box", "label", "valid_num"],
+                    column_order=["image", "image_shape", "box", "label", "valid_num"],
+                    operations=compose_map_func,
+                    num_parallel_workers=num_parallel_workers)
+        ds = ds.batch(batch_size, drop_remainder=True)
+    return ds
+
+```
+
 
 ### 2.3 模型构建
 
